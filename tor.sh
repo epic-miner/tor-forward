@@ -1,43 +1,60 @@
 #!/bin/bash
 
-# Check if script is run as root
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root (use sudo)"
-  exit
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
 fi
 
-# Update package list and install Tor
-echo "Updating package list and installing Tor..."
-sudo apt update && sudo apt install tor -y
+# Function to install Tor if not installed
+install_tor() {
+    echo "Checking if Tor is installed..."
+    if ! command -v tor >/dev/null 2>&1; then
+        echo "Tor not found. Installing Tor..."
+        apt update
+        apt install tor -y
+        echo "Tor installed successfully."
+    else
+        echo "Tor is already installed."
+    fi
+}
 
-# Tor configuration file path
-TORRC_FILE="/etc/tor/torrc"
+# Function to configure Tor for port forwarding
+configure_tor() {
+    echo "Configuring Tor for port forwarding..."
+    
+    # Backup torrc if not already backed up
+    if [ ! -f /etc/tor/torrc.backup ]; then
+        echo "Backing up /etc/tor/torrc to /etc/tor/torrc.backup"
+        cp /etc/tor/torrc /etc/tor/torrc.backup
+    fi
+    
+    # Hidden Service configuration
+    HIDDEN_SERVICE_DIR="/var/lib/tor/hidden_service"
+    PORT_TO_FORWARD=8080
+    read -p "Enter the port to forward (default 8080): " input_port
+    PORT_TO_FORWARD=${input_port:-$PORT_TO_FORWARD}
 
-# Hidden service directory path
-HIDDEN_SERVICE_DIR="/var/lib/tor/hidden_service"
+    echo "HiddenServiceDir $HIDDEN_SERVICE_DIR" >> /etc/tor/torrc
+    echo "HiddenServicePort 80 127.0.0.1:$PORT_TO_FORWARD" >> /etc/tor/torrc
 
-# Create backup of the original torrc file
-if [ ! -f "$TORRC_FILE.bak" ]; then
-  echo "Creating backup of torrc file..."
-  sudo cp $TORRC_FILE $TORRC_FILE.bak
-fi
+    # Restart Tor
+    echo "Restarting Tor service to apply changes..."
+    service tor restart
+}
 
-# Add hidden service configuration to torrc
-echo "Configuring hidden service for port 8080..."
-sudo bash -c "cat <<EOT >> $TORRC_FILE
-# Hidden Service for forwarding port 8080
-HiddenServiceDir $HIDDEN_SERVICE_DIR/
-HiddenServicePort 80 127.0.0.1:8080
-EOT"
+# Function to display the .onion address
+display_onion_address() {
+    echo "Fetching the .onion address..."
+    if [ -f /var/lib/tor/hidden_service/hostname ]; then
+        ONION_ADDRESS=$(cat /var/lib/tor/hidden_service/hostname)
+        echo "Your hidden service is available at: $ONION_ADDRESS"
+    else
+        echo "Error: Could not find the .onion address. Make sure the hidden service is set up correctly."
+    fi
+}
 
-# Restart Tor service
-echo "Restarting Tor service..."
-sudo systemctl restart tor
-
-# Display the .onion address
-if [ -f "$HIDDEN_SERVICE_DIR/hostname" ]; then
-  echo "Tor Hidden Service is set up. Your .onion address is:"
-  sudo cat $HIDDEN_SERVICE_DIR/hostname
-else
-  echo "Error: Tor hidden service directory not found!"
-fi
+# Main script execution
+install_tor
+configure_tor
+display_onion_address
